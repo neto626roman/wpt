@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+  <title>Test MediaSource addSourceBuffer overloads for WebCodecs Audio/VideoDecoderConfigs</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+
+test(t => {
+  assert_true(SourceBuffer.prototype.hasOwnProperty("appendEncodedChunks"),
+      "SourceBuffer prototype hasOwnProperty 'appendEncodedChunks'");
+}, "Test that MSE-for-WebCodecs feature appears supported");
+
+// Only do more extensive tests if the feature appears supported.
+if (SourceBuffer.prototype.hasOwnProperty("appendEncodedChunks")) {
+  testInvalidArguments();
+  testValidArguments();
+}
+
+function getValidAudioConfig() {
+  // TODO(crbug.com/1144908): Consider confirming with WebCodecs'
+  // isConfigSupported() once that API is available.
+  return {
+    codec: "opus",
+    sampleRate: 48000,
+    numberOfChannels: 2
+  };
+}
+
+function getValidVideoConfig() {
+  // TODO(crbug.com/1144908): Consider confirming with WebCodecs'
+  // isConfigSupported() once that API is available.
+  return { codec: "vp9" };
+}
+
+function testInvalidArguments() {
+  const INVALID_CASES = [
+    { arg: null,
+      name: "null" },
+    { arg: undefined,
+      name: "undefined" },
+    { arg: { },
+      name: "{ empty dictionary }" },
+    {
+      arg: {
+        audioConfig: getValidAudioConfig(),
+        videoConfig: getValidVideoConfig()
+      },
+      name: "{ valid audioConfig and videoConfig }",
+    },
+    {
+      arg: {
+        audioConfig: {
+          codec: "bogus",
+          sampleRate: 48000,
+          numberOfChannels: 2
+        }
+      },
+      name: "bad audio config codec",
+    },
+    { arg: { videoConfig: { codec: "bogus" } },
+      name: "bad video config codec" },
+    { arg: { audioConfig: { sampleRate: 48000, numberOfChannels: 2 } },
+      name: "audio config missing required member 'codec'" },
+    { arg: { videoConfig: { } },
+      name: "video config missing required member 'codec'" },
+  ];
+
+  INVALID_CASES.forEach(invalidCase => {
+    // All of these failures should be emitted prior to checking that the
+    // MediaSource is actually open, since they are type errors due to invalid
+    // argument to addSourceBuffer. Therefore, these are all synchronously
+    // tested.
+    test(t => {
+      var ms = new MediaSource();
+      assert_equals(ms.readyState, "closed", "MediaSource is closed");
+      var sb;
+      assert_throws_js(TypeError,
+          () => { sb = ms.addSourceBuffer(invalidCase["arg"]); },
+          "addSourceBuffer() throws TypeError exception for invalid SourceBufferConfig argument");
+      assert_equals(sb,
+          undefined,
+          "addSourceBuffer result for invalid case is undefined");
+    }, "Test invalid addSourceBuffer call with " + invalidCase["name"] +
+        " while MediaSource is closed");
+  });
+
+  INVALID_CASES.forEach(invalidCase => {
+    // TODO(crbug.com/1144908): Consider adding this information to the
+    // explainer once isConfigSupported() path in WebCodecs becomes clearer:
+    // Even if the MediaSource is open, we should fail with TypeError for all
+    // of these cases, because type checking (including codec string parsing
+    // for the WebCodecs configs) by addSourceBuffer is done before checking
+    // if the MediaSource is open. To test while MediaSource is open, we use
+    // async tests because the steps to open the MediaSource are themselves
+    // async. This is a subtle difference versus the overloaded
+    // addSourceBuffer(mime_type) behavior that checks type first, if open
+    // next, and then isTypeSupported. In the overloads that take WebCodecs
+    // configs, a valid decoder config (having the required members and a
+    // parseable, supported-by-WebCodecs codec value) is part of the type
+    // checks. WebCodecs will likely soon be getting isConfigSupported()
+    // asynchronous ability for apps to confirm full support proactively of
+    // configs before using them with either WebCodecs decoders or with these
+    // new MSE synchronous overloads. When that happens, it's probable these
+    // overloads will remain synchronous. Regardless, a not fully supported
+    // config could eventually produce a decode error later if used in these
+    // overloads.
+    async_test(t => {
+      var ms = new MediaSource();
+      var v = document.createElement('video');
+      ms.onsourceopen = () => {
+        URL.revokeObjectURL(v.src);
+        assert_equals(ms.readyState, "open", "MediaSource is open");
+        var sb;
+        assert_throws_js(TypeError,
+            () => { sb = ms.addSourceBuffer(invalidCase["arg"]); },
+            "addSourceBuffer() throws TypeError exception for invalid SourceBufferConfig argument");
+        assert_equals(sb,
+            undefined,
+            "addSourceBuffer result for invalid case is undefined");
+        t.done();
+      };
+      v.src = URL.createObjectURL(ms);
+    }, "Test invalid addSourceBuffer call with " + invalidCase["name"] +
+        " while MediaSource is open");
+  });
+}
+
+function testValidArguments() {
+  const VALID_CASES = [
+    { arg: getValidAudioConfig(), name: "valid audioConfig" },
+    { arg: getValidVideoConfig(), name: "valid videoConfig" },
+  ];
+
+  // If the MediaSource is not open (either closed or ended), then we should
+  // get an InvalidStateError exception if call the addSourceBuffer() overload
+  // that takes a SourceBufferConfig. Otherwise, we should be successful.
+  [ "closed", "open", "ended"].forEach(readyStateScenario => {
+    VALID_CASES.forEach(valid_case => {
+      switch(readyStateScenario) {
+        case "closed":
+          test(t => {
+          }, "Test addSourceBuffer call with valid config while MediaSource is closed");
+          break;
+        case "open":
+          // TODO(crbug.com/1144908): Update the test expectation here for
+          // valid arg in "open" readyState to expect success once the impl is
+          // more complete.
+          // BIG TODO
+          break;
+        case "ended":
+          // BIG TODO
+          break;
+      }
+    });
+  });
+
+}
+
+// BIG TODO: refactor so that helper does 'open' 'ended' 'closed' state setup
+// and checks for both invalid and valid args.
+
+function runAddSourceBufferTest(testDescription, readyStateScenario, argument, isValidArgument) {
+  switch(readyStateScenario) {
+    case "closed":
+      test(t => {
+        var ms = new MediaSource();
+        var sb;
+        assert_equals(ms.readyState, "closed", "MediaSource is closed");
+        if (isValidArgument) {
+          assert_throws_dom("InvalidStateError",
+              () => { sb = ms.addSourceBuffer(argument); },
+              "addSourceBuffer(valid config) throws InvalidStateError if MediaSource is 'closed'");
+          assert_equals(sb, undefined,
+              "addSourceBuffer result for valid config while 'closed' is undefined");
+        } else {
+          assert_throws_js(TypeError,
+              () => { sb = ms.addSourceBuffer(argument); },
+              "addSourceBuffer(invalid config) throws TypeError if MediaSource is 'closed'");
+          assert_equals(sb, undefined,
+              "addSourceBuffer result for invalid config while 'closed' is undefined");
+        }
+      }, testDescription);
+      break;
+    case "open":
+      async_test(t => {
+        var ms = new MediaSource();
+        var v = document.createElement("video");
+        ms.onsourceopen = () => {
+          URL.revokeObjectURL(v.src);
+          assert_equals(ms.readyState, "open", "MediaSource is open");
+          var sb;
+          if (isValidArgument) {
+            // TODO(crbug.com/1144908): Update to expect success once the impl
+            // is more complete.
+            assert_throws_dom("QuotaExceededError",
+              () => { sb = ms.addSourceBuffer(argument); },
+              "addSourceBuffer(valid config) throws QuotaExceededError");
+            assert_equals_sb, undefined,
+              "addSourceBuffer result for valid config while 'open' is undefined");
+          } else {
+            assert_throws_js(TypeError,
+              () => { sb = ms.addSourceBuffer(argument); },
+              "addSourceBuffer(invalid config) throws TypeError if MediaSource is 'open'");
+            assert_equals(sb, undefined,
+              "addSourceBufferResult for invalid config while 'open' is undefined");
+          }
+        };
+        v.src = URL.createObjectURL(ms);
+      }, testDescription);
+      break;
+    case "ended":
+      // We'll need to open the MediaSource before we can get to "ended"
+      // readyState.
+      async_test(t => {
+        var ms = new MediaSource();
+        var v = document.createElement("video");
+        ms.onsourceopen = () => {
+          URL.revokeObjectURL(v.src);
+          assert_equals(ms.readyState, "open");
+          ms.endOfStream();
+          assert_equals(ms.readyState, "ended");
+          var sb;
+          if (isValidArgument) {
+            assert_throws_dom("InvalidStateError",
+                () => { sb = ms.addSourceBuffer(argument); },
+                "addSourceBuffer(valid config) throws InvalidStateError if MediaSource is 'ended'");
+            assert_equals(sb, "undefined,
+                "addSourceBuffer result for valid config while 'ended' is undefined");
+          } else // BIG TODO continue refactoring this here...
+        };
+        v.src = URL.createObjectURL(ms);
+      }, testDescription);
+      break;
+    default:
+      assert_unreached("Invalid readyStateScenario " + readyStateScenario);
+      break;
+  }
+}
+
+</script>
+</html>
